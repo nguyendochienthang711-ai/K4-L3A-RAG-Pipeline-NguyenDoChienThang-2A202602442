@@ -1,7 +1,10 @@
 import base64
 from datetime import datetime
+import html
 from pathlib import Path
+import re
 import streamlit as st
+from src.task10_generation import generate_with_citation
 
 # ==============================================================================
 # PAGE CONFIGURATION
@@ -1155,6 +1158,18 @@ div[data-testid="stButton"] > button:not([data-testid="stSidebar"] *):active {{
         max-width: 90% !important;
     }}
 }}
+
+.doc-citation-badge {{
+    background: #EEF0FD;
+    color: #5B50E6;
+    font-weight: 700;
+    font-size: 11.5px;
+    padding: 2px 7px;
+    border-radius: 6px;
+    margin: 0 3px;
+    border: 1px solid rgba(91, 80, 230, 0.25);
+    display: inline-block;
+}}
 </style>
 """
 
@@ -1162,264 +1177,84 @@ st.html(CUSTOM_CSS)
 
 
 # ==============================================================================
-# SMART RESPONSE ENGINE (Simulating RAG Knowledge for Instant Interactivity)
+# RAG PIPELINE INTEGRATION
 # ==============================================================================
 def generate_bot_response(query: str) -> str:
-    """Generates a rich, knowledge-grounded response matching Image 2 styling."""
-    q = query.lower()
+    """Gọi pipeline RAG thực tế từ src.task10_generation và sinh HTML hiển thị."""
+    top_k = st.session_state.get("top_k", 5)
+    try:
+        result = generate_with_citation(query, top_k=top_k)
+        answer = result.get("answer", "")
+        sources = result.get("sources", [])
+        method = result.get("retrieval_source", "hybrid")
+    except Exception as e:
+        answer = f"Đã xảy ra lỗi khi kết nối RAG Pipeline: {e}"
+        sources = []
+        method = "none"
 
-    if any(k in q for k in ["gia hạn", "renew", "mượn thêm"]):
-        return f"""
-            <div>
-                Chào bạn! 🦉 Bạn hoàn toàn có thể tự <span class="text-purple-bold">gia hạn sách online 100%</span> qua Cổng tra cứu OPAC chỉ trong 30 giây mà không cần mang sách tới quầy thủ thư:
-            </div>
+    # Chuyển đổi trích dẫn markdown [Document X] thành badge nổi bật
+    formatted_answer = html.escape(answer)
+    formatted_answer = re.sub(
+        r'\[(Document\s*\d+(?:,\s*Document\s*\d+)*)\]',
+        r'<span class="doc-citation-badge">\1</span>',
+        formatted_answer,
+    )
+    formatted_answer = formatted_answer.replace("\n\n", "<br><br>").replace("\n", "<br>")
 
-            <div class="bot-table-container">
-                <table class="bot-table">
-                    <thead>
-                        <tr>
-                            <th>LOẠI SÁCH</th>
-                            <th>SỐ LẦN GIA HẠN</th>
-                            <th>THỜI GIAN GIA HẠN THÊM</th>
-                            <th>ĐIỀU KIỆN</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td><strong>📘 Sách giáo trình</strong></td>
-                            <td><span class="text-purple-bold">Tối đa 02 lần</span></td>
-                            <td><span class="pill-badge-green">+14 ngày / lần</span></td>
-                            <td>Chưa có SV khác đặt trước</td>
-                        </tr>
-                        <tr>
-                            <td><strong>📙 Sách tham khảo</strong></td>
-                            <td><span class="text-purple-bold">Tối đa 01 lần</span></td>
-                            <td><span class="pill-badge-green">+07 ngày / lần</span></td>
-                            <td>Tài khoản không nợ phạt</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
+    sources_html = ""
+    if sources:
+        sources_cards = []
+        for idx, src in enumerate(sources, 1):
+            meta = src.get("metadata", {})
+            title = html.escape(str(meta.get("title", "Tài liệu")))
+            source_file = html.escape(str(meta.get("source", "")))
+            score = src.get("score", 0.0)
+            src_method = src.get("retrieval_method", "dense")
+            url = meta.get("url")
+            url_link = (
+                f'<a href="{url}" target="_blank" style="color: var(--primary-purple); text-decoration: underline;">🔗 Xem tài liệu gốc</a>'
+                if url
+                else f'<span style="color: var(--text-muted);">📄 {source_file}</span>'
+            )
+            raw_content = str(src.get("content", ""))
+            content_snippet = html.escape(raw_content[:260]) + ("..." if len(raw_content) > 260 else "")
 
-            <div class="steps-box">
-                <div class="steps-box-title">
-                    <span>✔</span>
-                    <span>3 bước gia hạn tức thì trên điện thoại hoặc laptop:</span>
+            sources_cards.append(f"""
+                <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                        <span style="font-weight: 700; color: #1E293B; font-size: 13px;">[{idx}] {title}</span>
+                        <span style="font-size: 11px; background: #EEF0FD; color: #5B50E6; padding: 2px 8px; border-radius: 999px; font-weight: 600;">Score: {score:.3f} ({src_method})</span>
+                    </div>
+                    <div style="font-size: 12px; color: #475569; line-height: 1.5; margin-bottom: 6px; font-style: italic;">
+                        "{content_snippet}"
+                    </div>
+                    <div style="font-size: 11px;">{url_link}</div>
                 </div>
-                <ol class="steps-box-list">
-                    <li>Truy cập <strong>Cổng thông tin Thư viện (OPAC)</strong> bằng tài khoản SSO sinh viên.</li>
-                    <li>Chọn mục <strong>Tài khoản cá nhân ➔ Đang mượn</strong>.</li>
-                    <li>Bấm nút <strong>Gia hạn (Renew)</strong> tương ứng bên cạnh cuốn sách bạn cần gia hạn thêm.</li>
-                </ol>
-            </div>
+            """)
 
-            <div class="warning-box">
-                <span style="font-size: 16px;">⚠️</span>
-                <div>
-                    <strong>Lưu ý cốt lõi:</strong> Bạn chỉ được gia hạn khi tài liệu <u>chưa quá hạn</u>. Nếu sách đã trễ hạn dù chỉ 1 ngày, hệ thống sẽ tự động khóa gia hạn online và áp dụng mức phạt <strong>3.000 đ / cuốn / ngày</strong> nhé!
+        sources_html = f"""
+            <details style="margin-top: 14px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 10px 14px; cursor: pointer;">
+                <summary style="font-weight: 700; color: #5B50E6; font-size: 13px; outline: none;">
+                    📚 Xem {len(sources)} tài liệu nguồn tham khảo • Phương thức: <strong>{method.upper()}</strong>
+                </summary>
+                <div style="margin-top: 10px;">
+                    {''.join(sources_cards)}
                 </div>
-            </div>
-
-            <div class="bot-actions-row">
-                <a href="#" class="btn-bot-action-primary"><span>Mở Cổng OPAC để gia hạn ngay ↗</span></a>
-                <a href="#" class="btn-bot-action-secondary"><span>📄 Xem sổ tay quy chế PDF</span></a>
-            </div>
-
-            <div class="msg-feedback-bar">
-                <span class="feedback-action-pill">📋 Sao chép</span>
-                <span class="feedback-action-pill">👍 Hữu ích</span>
-                <span class="feedback-action-pill">👎 Chưa rõ</span>
-                <span class="feedback-action-pill">🔄 Tạo lại</span>
-            </div>
+            </details>
         """
 
-    elif any(k in q for k in ["giờ", "mở cửa", "24/7", "phòng tự học", "mùa thi"]):
-        return f"""
-            <div>
-                Chào bạn! 🦉 Thư viện mở cửa phục vụ sinh viên với thời gian và không gian máy lạnh như sau:
-            </div>
-
-            <div class="bot-table-container">
-                <table class="bot-table">
-                    <thead>
-                        <tr>
-                            <th>KHÔNG GIAN</th>
-                            <th>NGÀY PHỤC VỤ</th>
-                            <th>GIỜ HOẠT ĐỘNG</th>
-                            <th>GHI CHÚ</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td><strong>❄️ Phòng Tự học Tầng Trệt</strong></td>
-                            <td>Thứ 2 – Chủ Nhật</td>
-                            <td><span class="pill-badge-green">24/7 Mở xuyên đêm</span></td>
-                            <td>Có máy lạnh & wifi tốc độ cao</td>
-                        </tr>
-                        <tr>
-                            <td><strong>📚 Tầng 1 – Tầng 3 (Khu mượn trả)</strong></td>
-                            <td>Thứ 2 – Thứ 6</td>
-                            <td>07:30 – 21:00</td>
-                            <td>Thứ 7 mở cửa 07:30 – 17:00</td>
-                        </tr>
-                        <tr>
-                            <td><strong>💻 Phòng học nhóm & Multimedia</strong></td>
-                            <td>Thứ 2 – Thứ 7</td>
-                            <td>08:00 – 20:30</td>
-                            <td>Đặt trước qua website thư viện</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-
-            <div class="warning-box">
-                <span style="font-size: 16px;">💡</span>
-                <div>
-                    <strong>Mùa thi cử:</strong> Toàn bộ tầng trệt và tầng 1 được tăng cường phục vụ <strong>24/24</strong> suốt kỳ thi học kỳ. Bạn chỉ cần quét mã thẻ sinh viên (RFID) tại cổng kiểm soát để vào tự học nhé!
-                </div>
-            </div>
-
-            <div class="related-topics-row">
-                <span style="font-weight: 600;">Chủ đề liên quan:</span>
-                <span class="related-topic-tag">📍 Đặt phòng học nhóm tầng 3</span>
-                <span class="related-topic-tag">🪪 Quẹt thẻ vào thư viện</span>
-                <span class="related-topic-tag">📦 Hộp trả sách 24/7</span>
-            </div>
-
-            <div class="msg-feedback-bar">
-                <span class="feedback-action-pill">📋 Sao chép</span>
-                <span class="feedback-action-pill">👍 Hữu ích</span>
-                <span class="feedback-action-pill">👎 Chưa rõ</span>
-                <span class="feedback-action-pill">🔄 Tạo lại</span>
-            </div>
-        """
-
-    elif any(k in q for k in ["phạt", "trễ", "quá hạn", "khóa thẻ"]):
-        return f"""
-            <div>
-                Quy định xử lý trễ hạn và các mức phí phạt của Thư viện được áp dụng công khai như sau:
-            </div>
-
-            <div class="bot-table-container">
-                <table class="bot-table">
-                    <thead>
-                        <tr>
-                            <th>HÀNH VI VI PHẠM</th>
-                            <th>MỨC PHẠT</th>
-                            <th>BIỆN PHÁP KÈM THEO</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td><strong>Mượn sách quá hạn</strong></td>
-                            <td><span style="color: #DC2626; font-weight: 700;">3.000 đ / cuốn / ngày</span></td>
-                            <td>Khóa tính năng gia hạn online</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Quá hạn trên 30 ngày</strong></td>
-                            <td>Phạt theo ngày + Tạm dừng mượn</td>
-                            <td>Khóa quyền mượn sách học kỳ tiếp theo</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Làm mất tài liệu</strong></td>
-                            <td>Đền sách mới cùng loại + 50.000đ xử lý</td>
-                            <td>Hoặc bồi hoàn gấp 3 lần giá bìa sách</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-
-            <div class="warning-box">
-                <span style="font-size: 16px;">⚠️</span>
-                <div>
-                    <strong>Lưu ý:</strong> Sinh viên có nợ phạt quá hạn sẽ không được chứng thực hồ sơ tốt nghiệp hoặc đăng ký học phần mới cho đến khi hoàn tất nộp phạt tại quầy thủ thư hoặc chuyển khoản qua Cổng OPAC.
-                </div>
-            </div>
-
-            <div class="bot-actions-row">
-                <a href="#" class="btn-bot-action-primary"><span>Tra cứu khoản phạt trên OPAC ↗</span></a>
-            </div>
-
-            <div class="msg-feedback-bar">
-                <span class="feedback-action-pill">📋 Sao chép</span>
-                <span class="feedback-action-pill">👍 Hữu ích</span>
-                <span class="feedback-action-pill">👎 Chưa rõ</span>
-                <span class="feedback-action-pill">🔄 Tạo lại</span>
-            </div>
-        """
-
-    elif any(k in q for k in ["thẻ", "tân sinh viên", "kích hoạt", "rfid"]):
-        return f"""
-            <div>
-                Chào Tân sinh viên! 🦉 Thẻ sinh viên của bạn đã được tích hợp sẵn <strong>công nghệ RFID</strong> để sử dụng đồng bộ các dịch vụ thư viện:
-            </div>
-
-            <div class="steps-box">
-                <div class="steps-box-title">
-                    <span>🪪</span>
-                    <span>Quy trình kích hoạt thẻ Tân sinh viên trong 1 phút:</span>
-                </div>
-                <ol class="steps-box-list">
-                    <li>Mang theo <strong>Thẻ sinh viên</strong> tới Kiosk kích hoạt tại sảnh chính Thư viện.</li>
-                    <li>Chạm thẻ vào đầu đọc RFID và nhập mật khẩu cổng SSO cá nhân.</li>
-                    <li>Hệ thống thông báo kích hoạt thành công: Bạn có thể bắt đầu mượn tài liệu và vào phòng tự học ngay!</li>
-                </ol>
-            </div>
-
-            <div class="warning-box">
-                <span style="font-size: 16px;">💡</span>
-                <div>
-                    <strong>Hạn mức bạn đọc:</strong> Sinh viên chính quy được mượn tối đa <strong>05 cuốn sách/lần</strong> trong thời gian <strong>21 ngày</strong> và được gia hạn thêm tối đa 02 lần.
-                </div>
-            </div>
-
-            <div class="related-topics-row">
-                <span style="font-weight: 600;">Chủ đề liên quan:</span>
-                <span class="related-topic-tag">📖 Hướng dẫn mượn sách</span>
-                <span class="related-topic-tag">💻 Đăng ký tài khoản Scopus</span>
-                <span class="related-topic-tag">📍 Sơ đồ vị trí các tầng</span>
-            </div>
-
-            <div class="msg-feedback-bar">
-                <span class="feedback-action-pill">📋 Sao chép</span>
-                <span class="feedback-action-pill">👍 Hữu ích</span>
-                <span class="feedback-action-pill">👎 Chưa rõ</span>
-                <span class="feedback-action-pill">🔄 Tạo lại</span>
-            </div>
-        """
-
-    else:
-        return f"""
-            <div>
-                Cảm ơn bạn đã đặt câu hỏi! 🦉 Về vấn đề <em>"{query}"</em>, UniLib Bot xin phản hồi dựa trên <strong>Sổ tay Quy chế Thư viện Đại học 2024–2025</strong>:
-            </div>
-
-            <div class="steps-box">
-                <div class="steps-box-title">
-                    <span>📌</span>
-                    <span>Tóm tắt thông tin quan trọng:</span>
-                </div>
-                <ol class="steps-box-list">
-                    <li>Tất cả thủ tục mượn trả, tra cứu và gia hạn tài liệu được đồng bộ trực tiếp qua <strong>Cổng thông tin OPAC</strong>.</li>
-                    <li>Nếu cần hỗ trợ tài liệu chuyên khảo hoặc luận văn cao học, bạn có thể liên hệ quầy Thủ thư tại Tầng 2 (08:00 – 16:30 các ngày trong tuần).</li>
-                    <li>Mọi thắc mắc kỹ thuật về tài khoản SSO và cơ sở dữ liệu số (ScienceDirect, Scopus, IEEE) đều được giải đáp trực tuyến 24/7.</li>
-                </ol>
-            </div>
-
-            <div class="related-topics-row">
-                <span style="font-weight: 600;">Chủ đề gợi ý:</span>
-                <span class="related-topic-tag">⚡ Gia hạn sách online 30s</span>
-                <span class="related-topic-tag">❄️ Phòng tự học 24/7 mùa thi</span>
-                <span class="related-topic-tag">⚠️ Phạt trễ hạn & khóa thẻ</span>
-            </div>
-
-            <div class="msg-feedback-bar">
-                <span class="feedback-action-pill">📋 Sao chép</span>
-                <span class="feedback-action-pill">👍 Hữu ích</span>
-                <span class="feedback-action-pill">👎 Chưa rõ</span>
-                <span class="feedback-action-pill">🔄 Tạo lại</span>
-            </div>
-        """
+    return f"""
+        <div style="line-height: 1.6; font-size: 14.5px; color: var(--text-body);">
+            {formatted_answer}
+        </div>
+        {sources_html}
+        <div class="msg-feedback-bar" style="margin-top: 12px;">
+            <span class="feedback-action-pill">📋 Sao chép</span>
+            <span class="feedback-action-pill">👍 Hữu ích</span>
+            <span class="feedback-action-pill">👎 Chưa rõ</span>
+            <span class="feedback-action-pill">🔄 Tạo lại</span>
+        </div>
+    """
 
 
 # ==============================================================================
@@ -1429,75 +1264,11 @@ def init_session_state():
     if "view_mode" not in st.session_state:
         st.session_state["view_mode"] = "landing"
 
+    if "top_k" not in st.session_state:
+        st.session_state["top_k"] = 5
+
     if "messages" not in st.session_state:
-        st.session_state["messages"] = [
-            {
-                "role": "user",
-                "time": "10:24 AM",
-                "user_name": "Nguyễn Văn An",
-                "user_avatar": "NV",
-                "content": "Chào bot! Mình sắp đến hạn trả 2 cuốn sách Giải tích và Lập trình Python. Làm thế nào để gia hạn thêm online mà không phải lên thư viện nhỉ? Được gia hạn mấy lần?",
-            },
-            {
-                "role": "bot",
-                "time": "10:24 AM",
-                "content_html": generate_bot_response("gia hạn sách online"),
-            },
-            {
-                "role": "user",
-                "time": "10:25 AM",
-                "user_name": "Nguyễn Văn An",
-                "user_avatar": "NV",
-                "content": "Nếu sách đã có người khác bấm đặt trước (hold) thì mình có được gia hạn không bot ơi?",
-            },
-            {
-                "role": "bot",
-                "time": "10:25 AM",
-                "content_html": """
-                    <div>
-                        Trường hợp này hệ thống sẽ <span style="color: #DC2626; font-weight: 600;">không cho phép gia hạn tiếp</span> nha An ơi! 😿
-                    </div>
-                    <div style="margin-top: 8px;">
-                        Quy chế thư viện ưu tiên quyền tiếp cận tài liệu công bằng cho bạn đọc đã đăng ký xếp hàng trước. Vì vậy, An vui lòng mang trả sách đúng hạn trước <strong>17:00 ngày mai</strong> tại một trong hai hình thức siêu tiện lợi sau:
-                    </div>
-
-                    <div class="return-cards-grid">
-                        <div class="return-card">
-                            <div class="return-card-title">
-                                <span>🖥️</span>
-                                <span>Quầy Check-out tự động</span>
-                            </div>
-                            <div class="return-card-desc">
-                                Tầng 1 & Tầng 2, quét RFID trong 5 giây có biên nhận ngay.
-                            </div>
-                        </div>
-                        <div class="return-card">
-                            <div class="return-card-title">
-                                <span>📦</span>
-                                <span>Hộp trả sách 24/7 (Book Drop)</span>
-                            </div>
-                            <div class="return-card-desc">
-                                Đặt ngay cửa chính thư viện, trả sách bất cứ lúc nào kể cả nửa đêm!
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="related-topics-row">
-                        <span style="font-weight: 600;">Chủ đề liên quan:</span>
-                        <span class="related-topic-tag">📍 Vị trí Hộp trả sách 24/7</span>
-                        <span class="related-topic-tag">⏰ Giờ làm việc quầy thủ thư</span>
-                        <span class="related-topic-tag">💰 Mức phạt trễ hạn</span>
-                    </div>
-
-                    <div class="msg-feedback-bar">
-                        <span class="feedback-action-pill">📋 Sao chép</span>
-                        <span class="feedback-action-pill">👍 Hữu ích</span>
-                        <span class="feedback-action-pill">👎 Chưa rõ</span>
-                        <span class="feedback-action-pill">🔄 Tạo lại</span>
-                    </div>
-                """,
-            },
-        ]
+        st.session_state["messages"] = []
 
 
 def process_user_query(query: str):

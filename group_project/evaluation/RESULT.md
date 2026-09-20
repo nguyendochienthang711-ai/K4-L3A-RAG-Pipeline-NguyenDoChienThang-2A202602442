@@ -6,8 +6,8 @@
 | ---------------------------------- | ----- |
 | Evaluation date                    | 2026-09-20 |
 | Framework and version              | Ragas 0.4.3, LangChain 0.4.1, ChromaDB 0.5.0 |
-| Evaluator model                    | Gemini 2.5 Flash / GPT-4o-mini (LLM-as-a-judge) |
-| Generator model                    | Gemini 2.5 Flash / GPT-4o-mini |
+| Evaluator model                    | Gemini 3.5 Flash Lite (LLM-as-a-judge) |
+| Generator model                    | Gemini 3.5 Flash Lite |
 | Embedding model                    | sentence-transformers/all-MiniLM-L6-v2 |
 | Corpus version/commit              | 76ae8ba (VNULIB Library Policies & Services) |
 | Golden dataset size                | 16 grounded Q&A pairs |
